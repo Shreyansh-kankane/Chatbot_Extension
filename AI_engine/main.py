@@ -107,20 +107,24 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
 from langchain_openai import OpenAIEmbeddings
 from functools import lru_cache
+import chromadb
+
 
 # Set the OpenAI API key
+os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
+
+# Initialize Chroma Cloud client
+chroma_client = chromadb.Client()
+
 
 # RAG class definition
 class RAG:
     def __init__(self, namespace, model="gpt-4o-mini"):
         # Initialize the language model
-        self.llm = ChatOpenAI(model=model)
-
+        self.llm = ChatOpenAI(model=model, api_key=os.getenv("OPENAI_API_KEY"))
         # Load the vector store for the specific website (namespace)
-        self.vectorstore = Chroma(
-            embedding=OpenAIEmbeddings(),
-            persist_directory=f"chroma_db/{namespace}"  # Each website/namespace has its own storage
-        )
+        self.vectorstore = chroma_client.get_or_create_collection(name=namespace)
+        
 
         self.retriever = self.vectorstore.as_retriever()
         self.prompt = hub.pull("rlm/rag-prompt")
@@ -154,16 +158,20 @@ class QueryRequest(BaseModel):
 
 # Model for the initialization request
 class InitRequest(BaseModel):
-    code: str
+    domain: str
 
 # Mapping of website codes to namespaces (to be populated during setup)
-code_mp = {}
+
+# Mapping of domain names to namespaces (e.g., example.com -> namespace1)
+# We store them on registering as a Website owner
+domain_namespace = {} 
+
 
 # Endpoint to initialize RAG based on a code (namespace)
 @app.post("/init-rag")
 async def init_rag(request: InitRequest):
     try:
-        namespace = code_mp.get(request.code)  # Retrieve the namespace using the provided code
+        namespace = domain_namespace.get(request.domain)  # Retrieve the namespace using the provided code
         if not namespace:
             return {"error": "Invalid Code"}
 
@@ -175,8 +183,7 @@ async def init_rag(request: InitRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# Mapping of domain names to namespaces (e.g., example.com -> namespace1)
-domain_namespace = {}
+
 
 # Endpoint to ask questions and get answers from RAG
 @app.post("/query")
@@ -195,5 +202,27 @@ async def ask_question(domain: str, query: QueryRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+@app.post("/test_query")
+async def ask_question(namespace : str  , query: QueryRequest):
+    try:
+        rag_instance = RAG(namespace)
 
+        # Generate the answer using the RAG engine
+        answer = rag_instance.generate_answer(query.question)
+        return {"question": query.question, "answer": answer}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+# Tasks ->  
+# 1> Shift to pinecone
+# 2> Integrate with backend Microservice
+# 3> testing with cache api
+# 4> Alternative to caching RAG instances ( possibly deploying seperate RAG chains on cloud for each website/namespace)
+# 5> Start creating a dummy frontend for register/initialize , login , dashboard , chat component
+
+# Installation ->
+ 
+# Install all files from requirement.txt
 # Run the application with: uvicorn filename:app --reload

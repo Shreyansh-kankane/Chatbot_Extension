@@ -1,0 +1,8 @@
+fastapi
+pydantic
+openai
+langchain
+langchain_openai
+langchain_chroma
+chromadb
+functions
