@@ -22,4 +22,4 @@ main()
     process.exit(1)
   })
 
-module.exports = prisma ;
+export default prisma ;

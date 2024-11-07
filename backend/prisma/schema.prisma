@@ -8,15 +8,11 @@ datasource db {
 }
 
 model User {
-  id      Int      @id @default(autoincrement())
-  email   String   @unique
-  name    String?
-  role    Role     @default(USER)
-  namespace   String
-  domain    String
-}
-
-enum Role {
-  USER
-  ADMIN
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  name      String?
+  mobile    Int
+  password  String
+  namespace String?  // Make this field optional
+  domain    String?  // Make this field optional
 }
