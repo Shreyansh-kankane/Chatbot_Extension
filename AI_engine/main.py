@@ -107,17 +107,26 @@ from langchain_openai import ChatOpenAI
 from langchain_chroma import Chroma
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
-from langchain_openai import OpenAIEmbeddings
+from sentence_transformers import SentenceTransformer
 from functools import lru_cache
 from langchain_community.embeddings import OpenAIEmbeddings
 from dotenv import load_dotenv
 import chromadb
 import PyPDF2
+from langchain.prompts import PromptTemplate
+from openai import OpenAI
+
+
+
 
 load_dotenv()
 
 # Set the OpenAI API key
 os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
+
+
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
 
 # Initialize Chroma Cloud client
 chroma_client = chromadb.Client()
@@ -125,7 +134,7 @@ chroma_client = chromadb.Client()
 
 # RAG class definition
 class RAG:
-    def __init__(self, namespace, model="gpt-4o-mini"):
+    def __init__(self, namespace="testing", model="gpt-4o-mini"):
         # Initialize the language model
         self.llm = ChatOpenAI(model=model, api_key=os.getenv("OPENAI_API_KEY"))
         # Load the vector store for the specific website (namespace)
@@ -172,6 +181,18 @@ class InitRequest(BaseModel):
 # We store them on registering as a Website owner
 domain_namespace = {} 
 
+class CustomEmbeddingFunction:
+    def __init__(self, model):
+        self.model = model
+
+    def embed_documents(self, input):
+        # Assuming input is a list of strings to be embedded
+        return self.model.encode(input, convert_to_tensor=True)
+    
+    def embed_query(self, input):
+        # Assuming input is a list of strings to be embedded
+        return self.model.encode(input, convert_to_tensor=True)
+
 
 # Endpoint to initialize RAG based on a code (namespace)
 @app.post("/init-rag")
@@ -211,62 +232,96 @@ async def ask_question(domain: str, query: QueryRequest):
     
 
 
-# @app.post('/createEmbeddings')
-# async def create_embeddings(namespace: str = Form(...), file: UploadFile = File(...)):
-#     pdf_reader = PyPDF2.PdfReader(file.file)
+@app.post('/createEmbeddings')
+async def create_embeddings(namespace: str = Form(...), file: UploadFile = File(...)):
+    pdf_reader = PyPDF2.PdfReader(file.file)
     
-#     print(os.getenv("OPENAI_API_KEY"))
-#     for key, value in os.environ.items():
-#         print(f"{key}: {value}")
-#     file_text = ""
-#     for page in pdf_reader.pages:
-#         file_text += page.extract_text()
+    print(os.getenv("OPENAI_API_KEY"))
+    for key, value in os.environ.items():
+        print(f"{key}: {value}")
+    file_text = ""
+    for page in pdf_reader.pages:
+        file_text += page.extract_text()
 
-#     # Create embeddings using OpenAI
-#     print(file_text)
-#     try:
+    # Create embeddings using OpenAI
+    print("Text Data-----------------" , file_text)
+    try:
         
-#         embeddings_model = OpenAIEmbeddings(api_key=os.getenv("OPENAI_API_KEY"))
-#         embeddings = embeddings_model.embed_documents([file_text])
+        # embeddings_model = OpenAIEmbeddings(api_key=os.getenv("OPENAI_API_KEY"))
+        # embeddings = embeddings_model.embed_documents([file_text])
+        
+        
+        embeddings_model = SentenceTransformer('all-MiniLM-L6-v2')
+        
+        custom_embeddings = CustomEmbeddingFunction(embeddings_model)
+        persist_directory =  f'./data/{namespace}'
+        
+        vector_store = Chroma(persist_directory=persist_directory, embedding_function=custom_embeddings)
 
-#         # Create or load a Chroma vector store for the given namespace
-#         vector_store = Chroma(
-#             persist_directory=f"./data/{namespace}",  # Namespace-based storage
-#             embedding_function=embeddings_model
-#         )
+        # Add the document to the vector store
+        vector_store.add_texts(texts=[file_text], ids=[namespace])
+        
+        print("Created embeddings at /data/", namespace)
+        return {"message": "Embeddings created and stored successfully "}
 
-#         # Add embeddings to the vector store
-#         vector_store.add_texts([file_text], embeddings)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+    
 
-#         # Persist the vector store for later use
-#         vector_store.persist()
+def generate_response(context: str, query: str) -> str:
+    response = client.chat.completions.create(
+        model="gpt-3.5-turbo",
+        messages=[
+            {"role": "system", "content": "You are a knowledgeable programming assistant."},
+            {
+                "role": "user",
+                "content": (
+                    f"Context: {context}\n"
+                    f"Question: {query}"
+                ),
+            },
+        ],
+    )
 
-#         return {"message": "Embeddings created and stored successfully"}
+    # Access the generated answer
+    answer = response['choices'][0]['message']['content']
+    return answer
 
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=str(e))
 
     
-# @app.post("/test_query")
-# async def ask_question(namespace : str  , query: QueryRequest):
-#     try:
-#         rag_instance = RAG(namespace)
+@app.post("/test_query")
+async def ask_question(namespace: str, query: QueryRequest):
+    try:
+        # Initialize the RAG instance for the specified namespace
+        embeddings_model = SentenceTransformer('all-MiniLM-L6-v2')
+        custom_embeddings = CustomEmbeddingFunction(embeddings_model)
+        
+        db3 = Chroma(persist_directory=f"./data/{namespace}" , embedding_function=custom_embeddings)
+        
+        context = db3.similarity_search(query.question)
+        
+        if not context:
+            return {"question": query.question, "answer": "No relevant information found."}
+        
 
-#         # Generate the answer using the RAG engine
-#         answer = rag_instance.generate_answer(query.question)
-#         return {"question": query.question, "answer": answer}
+        # Combine the results into one string for clarity
+        context = " ".join(result.page_content for result in context)
+        
+        
+        print("Context----------" , context)
 
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=str(e))
+        # Use OpenAI or another model to generate a structured answer based on the context
+        answer = generate_response(context, query.question)
+
+        # Return the question and generated answer
+        return {"question": query.question, "answer": answer}
+        
+
+        # Return the question and generated answer
+        # return {"question": query.question, "answer": answer}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
     
-# Tasks ->  
-# 1> Shift to pinecone
-# 2> Integrate with backend Microservice
-# 3> testing with cache api
-# 4> Alternative to caching RAG instances ( possibly deploying seperate RAG chains on cloud for each website/namespace)
-# 5> Start creating a dummy frontend for register/initialize , login , dashboard , chat component
-
-# Installation ->
- 
-# Install all files from requirement.txt
 # Run the application with: uvicorn filename:app --reload
