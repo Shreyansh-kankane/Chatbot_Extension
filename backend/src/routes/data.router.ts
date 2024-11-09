@@ -7,4 +7,5 @@ const dataRouter = Router();
 dataRouter.post('/s3Data', s3Controller);
 dataRouter.post('/createEmbeddings', createEmbeddings);
 
+
 export default dataRouter;

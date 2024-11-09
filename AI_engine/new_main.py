@@ -114,15 +114,27 @@ async def init_rag(request: InitRequest):
 @app.post("/query")
 async def ask_question(domain: str, query: QueryRequest):
     try:
-        namespace = domain_namespace.get(domain)
+        namespace , api_key = domain_namespace.get(domain)
         if not namespace:
             raise HTTPException(status_code=404, detail="Namespace not found")
 
-        # Lazily load or get the cached RAG instance
-        rag_instance = get_rag_instance(namespace)
+       
+        # Initialize the RAG instance for the specified namespace
+        embeddings_model = SentenceTransformer('all-MiniLM-L6-v2')
+        custom_embeddings = CustomEmbeddingFunction(embeddings_model)
+        
+        db3 = Chroma(persist_directory=f"./data/{namespace}" , embedding_function=custom_embeddings)
+        
+        context = db3.similarity_search(query.question)
+        
+        if not context:
+            return {"question": query.question, "answer": "No relevant information found."}
+        
 
-        # Generate the answer using the RAG engine
-        answer = rag_instance.generate_answer(query.question)
+
+        # Use OpenAI or another model to generate a structured answer based on the context
+        answer = generate_response(context, query.question , api_key)
+        
         return {"question": query.question, "answer": answer}
 
     except Exception as e:
@@ -167,7 +179,7 @@ async def create_embeddings(namespace: str = Form(...), file: UploadFile = File(
     
     
 
-def generate_response(context: str, query: str) -> str:
+def generate_response(context: str, query: str , api_key : str) -> str:
     print("c:",context,"q:",query)
     # response = client.chat.completions.create(
     #     model="gpt-3.5-turbo",
@@ -186,6 +198,7 @@ def generate_response(context: str, query: str) -> str:
     system_prompt = """
     You will be given a piece of context to answer the question at the end. If you don't know the answer, just say that you don't know, don't try to make up an answer. Keep the answer as concise as possible. Always say "thanks for asking!" at the end of the answer.
     """
+    genai.configure(api_key=api_key)
     model = genai.GenerativeModel("gemini-1.5-pro",system_instruction=system_prompt)
 
     user_prompt = f"""
