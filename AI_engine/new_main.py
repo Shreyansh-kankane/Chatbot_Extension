@@ -1,7 +1,7 @@
 import os
 from fastapi import FastAPI, HTTPException , UploadFile, File, Form
 
-
+import numpy as np
 from pydantic import BaseModel
 from langchain import hub
 from langchain_openai import ChatOpenAI
@@ -10,13 +10,15 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
 from sentence_transformers import SentenceTransformer
 from functools import lru_cache
-from langchain_community.embeddings import OpenAIEmbeddings
+# from langchain_community.embeddings import OpenAIEmbeddings
 from dotenv import load_dotenv
 import chromadb
 import PyPDF2
-from langchain.prompts import PromptTemplate
+# from langchain.prompts import PromptTemplate
 # from langchain_cohere.llms import Cohere
-from openai import OpenAI
+# from openai import OpenAI
+
+from pinecone import Pinecone, ServerlessSpec
 
 
 import google.generativeai as genai
@@ -24,6 +26,7 @@ import google.generativeai as genai
 load_dotenv()
 
 genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
+
 
 
 # Initialize Chroma Cloud client
@@ -145,7 +148,8 @@ async def ask_question(domain: str, query: QueryRequest):
 @app.post('/createEmbeddings')
 async def create_embeddings(namespace: str = Form(...), file: UploadFile = File(...)):
     pdf_reader = PyPDF2.PdfReader(file.file)
-    
+    print(os.environ.get("PINECONE_API_KEY"))
+    pc = Pinecone(api_key=os.environ.get("PINECONE_API_KEY"))
     # print(os.getenv("OPENAI_API_KEY"))
     for key, value in os.environ.items():
         print(f"{key}: {value}")
@@ -163,16 +167,44 @@ async def create_embeddings(namespace: str = Form(...), file: UploadFile = File(
         
         embeddings_model = SentenceTransformer('all-MiniLM-L6-v2')
         print("embed",embeddings_model)
-        custom_embeddings = CustomEmbeddingFunction(embeddings_model)
-        persist_directory =  f'./data/{namespace}'
+        # custom_embeddings = CustomEmbeddingFunction(embeddings_model)
         
-        vector_store = Chroma(persist_directory=persist_directory, embedding_function=custom_embeddings)
+        # persist_directory =  f'./data/{namespace}'
+        
+        # vector_store = Chroma(persist_directory=persist_directory, embedding_function=custom_embeddings)
 
-        # Add the document to the vector store
-        vector_store.add_texts(texts=[file_text], ids=[namespace])
+        # # Add the document to the vector store
+        # vector_store.add_texts(texts=[file_text], ids=[namespace])
         
-        print("Created embeddings at /data/", namespace)
-        return {"message": "Embeddings created and stored successfully "}
+        # print("Created embeddings at /data/", namespace)
+        # return {"message": "Embeddings created and stored successfully "}
+        
+        chunk_size = 500  # Adjust as needed for optimal input
+        chunks = [file_text[i:i + chunk_size] for i in range(0, len(file_text), chunk_size)]
+
+        # Generate embeddings for each chunk
+        chunk_embeddings = [embeddings_model.encode(chunk) for chunk in chunks]
+    
+        index_name = namespace
+        embedding_dimension = 384  # Fixed size for 'all-MiniLM-L6-v2'
+
+        if index_name not in pc.list_indexes():
+            pc.create_index(name=index_name, dimension=embedding_dimension , metric='euclidean',
+            spec=ServerlessSpec(
+                cloud='aws', 
+                region='us-east-1'
+            ))
+        index = pc.Index(index_name)
+        # Add chunks to Pinecone index with metadata
+        vectors = [
+            (f"{namespace}_chunk_{i}", embedding, {"text": chunk_text})  # Include metadata as a dictionary
+            for i, (embedding, chunk_text) in enumerate(zip(chunk_embeddings, chunks))
+        ]
+
+        # Perform the upsert operation to insert vectors along with their metadata
+        index.upsert(vectors)
+
+        print(f"Created embeddings in Pinecone under index: {namespace}")
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -222,26 +254,65 @@ def generate_response(context: str, query: str , api_key : str) -> str:
     
 @app.post("/test_query")
 async def ask_question(namespace: str, query: QueryRequest):
+    
     try:
         # Initialize the RAG instance for the specified namespace
         embeddings_model = SentenceTransformer('all-MiniLM-L6-v2')
         custom_embeddings = CustomEmbeddingFunction(embeddings_model)
         
-        db3 = Chroma(persist_directory=f"./data/{namespace}" , embedding_function=custom_embeddings)
         
-        context = db3.similarity_search(query.question)
+        # db3 = Chroma(persist_directory=f"./data/{namespace}" , embedding_function=custom_embeddings)
+        
+        pc = Pinecone(api_key=os.environ.get("PINECONE_API_KEY"))
+        
+        index_name = namespace
+        index = pc.Index(index_name)
+        
+        print("index_name------" , index_name)
+        
+        query_embedding = custom_embeddings.embed_query([query.question])[0]
+        
+        # print("query_embedding-----------------------" , query_embedding)
+        
+        if isinstance(query_embedding, np.ndarray):
+            query_embedding = query_embedding.tolist()  # Convert numpy array to list of floats
+        elif hasattr(query_embedding, 'detach'):  # Check if it's a tensor (PyTorch)
+            query_embedding = query_embedding.detach().numpy().tolist()
+        
+        
+        query_result = index.query(
+            vector=query_embedding,
+            top_k=5,  # Number of similar results you want
+            include_metadata=True,
+        )
+        
+        print("query_result-----------"  , query_result)
+        
+        
+        # context = db3.similarity_search(query.question)
         # context = "E-dukkan is a E-commerce Platform"
         # print("context---------------" , context)
         
-        if not context:
+        matches = query_result['matches']
+        
+        print(matches)
+        
+        if not matches:
             return {"question": query.question, "answer": "No relevant information found."}
+        
+        
+        # if not context:
+        #     return {"question": query.question, "answer": "No relevant information found."}
         
 
         # Combine the results into one string for clarity
         # context = " ".join(result.page_content for result in context)
 
         # Use OpenAI or another model to generate a structured answer based on the context
-        answer = generate_response(context, query.question)
+        
+        context = " ".join([match['metadata']['text'] for match in matches])  # Assuming 'text' is stored in metadata
+        
+        answer = generate_response(context, query.question , os.environ.get("GOOGLE_API_KEY"))
 
         # Return the question and generated answer
         return {"question": query.question, "answer": answer}
