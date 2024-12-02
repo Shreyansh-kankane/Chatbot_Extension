@@ -1,0 +1,15 @@
+# Python-related ignores
+__pycache__/
+*.py[cod]
+*.pyo
+*.log
+
+# Virtual environment
+vartalap_env/
+.env
+
+# Jupyter Notebook checkpoints (if applicable)
+.ipynb_checkpoints/
+
+# Data or sensitive files
+data/

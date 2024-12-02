@@ -1,6 +1,5 @@
 import os
 from fastapi import FastAPI, HTTPException , UploadFile, File, Form
-
 import numpy as np
 from pydantic import BaseModel
 from langchain import hub
@@ -17,6 +16,10 @@ import PyPDF2
 # from langchain.prompts import PromptTemplate
 # from langchain_cohere.llms import Cohere
 # from openai import OpenAI
+
+import uvicorn
+
+from fastapi.middleware.cors import CORSMiddleware
 
 from pinecone import Pinecone, ServerlessSpec
 
@@ -67,6 +70,21 @@ def get_rag_instance(namespace: str):
 
 # FastAPI app initialization
 app = FastAPI()
+
+origins = [
+    "http://localhost:8000",  # React development server
+    "https://pec.ac.in",      # PEC website or other allowed domains
+    "*"                       # Allow all origins (use with caution in production)
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,              # List of allowed origins
+    allow_credentials=True,             # Allow cookies or authentication headers
+    allow_methods=["*"],                # Allow all HTTP methods (GET, POST, etc.)
+    allow_headers=["*"],                # Allow all headers
+)
+
 
 # Model for the request to ask questions
 class QueryRequest(BaseModel):
@@ -142,7 +160,10 @@ async def ask_question(domain: str, query: QueryRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    
+
+@app.get('/health')
+def health_check():
+    return {"health": "ok"}  
 
 
 @app.post('/createEmbeddings')
@@ -320,5 +341,10 @@ async def ask_question(namespace: str, query: QueryRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+   
+if __name__ == "__main__":
+    uvicorn.run("main:app", host="127.0.0.1", port=8000)
+
     
 # Run the application with: uvicorn filename:app --reload

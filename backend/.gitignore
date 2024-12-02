@@ -1,0 +1,15 @@
+# Node.js-related ignores
+node_modules/
+.env
+*.log
+
+# Build outputs
+dist/
+build/
+.cache/
+
+# Prisma-specific files (if using Prisma for ORM)
+prisma/migrations/
+
+# TypeScript-related files
+*.tsbuildinfo

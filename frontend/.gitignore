@@ -1,0 +1,9 @@
+# Node.js-related ignores
+node_modules/
+.env
+*.log
+
+# Build outputs
+dist/
+build/
+.cache/

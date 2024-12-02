@@ -116,8 +116,7 @@ import PyPDF2
 from langchain.prompts import PromptTemplate
 from openai import OpenAI
 
-
-
+import uvicorn
 
 load_dotenv()
 
@@ -324,4 +323,6 @@ async def ask_question(namespace: str, query: QueryRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
-# Run the application with: uvicorn filename:app --reload
+if __name__ == "__main__":
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False, log_level="debug", debug=True)
+
